@@ -3,278 +3,275 @@
 
 #include <string.h>
 #include <stdbool.h>
-#include <stdarg.h>
 #include <unistd.h>
 #include <err.h>
 
 #include <netinet/in.h>
+#include <arpa/inet.h>
 
 #define BUFSIZE 512
-#define CMDSIZE 4
-#define PARSIZE 100
-
-#define MSG_220 "220 srvFtp version 1.0\r\n"
-#define MSG_331 "331 Password required for %s\r\n"
-#define MSG_230 "230 User %s logged in\r\n"
 #define MSG_530 "530 Login incorrect\r\n"
-#define MSG_221 "221 Goodbye\r\n"
-#define MSG_550 "550 %s: no such file or directory\r\n"
-#define MSG_299 "299 File %s size %ld bytes\r\n"
-#define MSG_226 "226 Transfer complete\r\n"
 
 /**
- * function: receive the commands from the client
+ * function: receive and analize the answer from the server
  * sd: socket descriptor
- * operation: \0 if you want to know the operation received
- *            OP if you want to check an especific operation
- *            ex: recv_cmd(sd, "USER", param)
- * param: parameters for the operation involve
- * return: only usefull if you want to check an operation
- *         ex: for login you need the seq USER PASS
- *             you can check if you receive first USER
- *             and then check if you receive PASS
+ * code: three leter numerical code to check if received
+ * text: normally NULL but if a pointer if received as parameter
+ *       then a copy of the optional message from the response
+ *       is copied
+ * return: result of code checking
  **/
-bool recv_cmd(int sd, char *operation, char *param) {
-    char buffer[BUFSIZE], *token;
-    int recv_s;
+bool recv_msg(int sd, int code, char *text) {
+    char buffer[BUFSIZE], message[BUFSIZE];
+    int recv_s, recv_code;
 
-    // receive the command in the buffer and check for errors
+    // receive the answer
 
 
+    // error checking
+    if (recv_s < 0) warn("error receiving data");
+    if (recv_s == 0) errx(1, "connection closed by host");
 
-    // expunge the terminator characters from the buffer
-    buffer[strcspn(buffer, "\r\n")] = 0;
-
-    // complex parsing of the buffer
-    // extract command receive in operation if not set \0
-    // extract parameters of the operation in param if it needed
-    token = strtok(buffer, " ");
-    if (token == NULL || strlen(token) < 4) {
-        warn("not valid ftp command");
-        return false;
-    } else {
-        if (operation[0] == '\0') strcpy(operation, token);
-        if (strcmp(operation, token)) {
-            warn("abnormal client flow: did not send %s command", operation);
-            return false;
-        }
-        token = strtok(NULL, " ");
-        if (token != NULL) strcpy(param, token);
-    }
-    return true;
+    // parsing the code and message receive from the answer
+    sscanf(buffer, "%d %[^\r\n]\r\n", &recv_code, message);
+    printf("%d %s\n", recv_code, message);
+    // optional copy of parameters
+    if(text) strcpy(text, message);
+    // boolean test for the code
+    return (code == recv_code) ? true : false;
 }
 
 /**
- * function: send answer to the client
- * sd: file descriptor
- * message: formatting string in printf format
- * ...: variable arguments for economics of formats
- * return: true if not problem arise or else
- * notes: the MSG_x have preformated for these use
+ * function: send command formated to the server
+ * sd: socket descriptor
+ * operation: four letters command
+ * param: command parameters
  **/
-bool send_ans(int sd, char *message, ...){
-    char buffer[BUFSIZE];
-    int n;
+void send_msg(int sd, char *operation, char *param) {
+    char buffer[BUFSIZE] = "";
 
-    va_list args;
-    va_start(args, message);
+    // command formating
+    if (param != NULL)
+        sprintf(buffer, "%s %s\r\n", operation, param);
+    else
+        sprintf(buffer, "%s\r\n", operation);
 
+    // send command and check for errors
 
-    vsprintf(buffer, message, args);
-
-
-    va_end(args);
-    // send answer preformated and check errors
-
-
-
-  //  printf("The string is:  %s\n", buffer);
-
-    n = write(sd, buffer, BUFSIZE);
-
-    if (n < 0){
-            perror("ERROR in writing to socket");
-            return false;
-        }
-
-        else {
-                return true;
-
-}}
+}
 
 /**
- * function: RETR operation
- * sd: socket descriptor
- * file_path: name of the RETR file
+ * function: simple input from keyboard
+ * return: input without ENTER key
  **/
+char * read_input() {
+    char *input = malloc(BUFSIZE);
+char *read;
+    if (fgets(input, BUFSIZE, stdin)) {
+        return strtok(input, "\n");
+    }
+    return NULL;
+}
 
-void retr(int sd, char *file_path) {
+/**
+ * function: login process from the client side
+ * sd: socket descriptor
+ **/
+void authenticate(int sd) {
+    char *input, desc[100];
+    int code;
+
+    //Pide el usuario
+    printf("username: ");
+    input = read_input();
+
+    // Envia el comando al servidor
+    code = send(sd, input, sizeof(input), 0);
+    if (code < 0){
+           perror("No se pudo enviar mensaje");
+        }
+
+    // Libera Memoria
+    free(input);
+
+    //Espera respuesta para pedir password
+    code = read(sd, desc, sizeof(desc));
+     if (code < 0){
+           perror("No se pudo leer el mensaje");
+        }
+
+        printf("Servidor Responde: %s\n", desc);
+
+
+    // Pide el password
+    printf("passwd: ");
+    input = read_input();
+
+    // Envia el comando al servidor
+     code = send(sd, input, strlen(input), 0);
+     if (code < 0){
+            perror("No se pudo enviar mensaje");
+        }
+
+    // Libera memoria
+    free(input);
+
+    // Espera la respuesta del servidor
+   desc[0]='\0';
+
+    code = recv(sd, desc, sizeof(desc), 0);
+    if (code < 0){
+            perror("No se pudo leer el mensaje");
+        }
+
+        printf("Servidor Responde: %s\n", desc);
+
+    //si la autenticacion no es correcta, se cierra la conexion
+        if(strcmp(desc,MSG_530)==0) {
+            close(sd);
+            exit(1);
+        }
+
+}
+
+/** SIN USAR TODAVIA
+ * function: operation get
+ * sd: socket descriptor
+ * file_name: file name to get from the server
+ **/
+void get(int sd, char *file_name) {
+    char desc[BUFSIZE], buffer[BUFSIZE];
+    int f_size, recv_s, r_size = BUFSIZE;
     FILE *file;
-    int bread;
-    long fsize;
-    char buffer[BUFSIZE];
 
-    // check if file exists if not inform error to client
+    // send the RETR command to the server
 
-    // send a success message with the file length
+    // check for the response
 
-    // important delay for avoid problems with buffer size
-    sleep(1);
+    // parsing the file size from the answer received
+    // "File %s size %ld bytes"
+    sscanf(buffer, "File %*s size %d bytes", &f_size);
 
-    // send the file
+    // open the file to write
+    file = fopen(file_name, "w");
+
+    //receive the file
+
+
 
     // close the file
+    fclose(file);
 
-    // send a completed transfer message
-}
-/**
- * funcion: check valid credentials in ftpusers file
- * user: login user name
- * pass: user password
- * return: true if found or false if not
- **/
-bool check_credentials(char *user, char *pass) {
-    FILE *file;
-    char *path = "./ftpusers", *line = NULL, cred[100];
-    size_t len = 0;
-    bool found = false;
+    // receive the OK from the server
 
-    // make the credential string
-
-    // check if ftpusers file it's present
-
-    // search for credential string
-
-    // close file and release any pointes if necessary
-
-    // return search status
 }
 
 /**
- * function: login process management
+ * function: operation quit
  * sd: socket descriptor
- * return: true if login is succesfully, false if not
  **/
-bool authenticate(int sd) {
-    char user[PARSIZE], pass[PARSIZE];
 
-    // wait to receive USER action
+void quit(int sd) {
 
-    // ask for password
+    // Envia el comando QUIT al servidor
+    char *buffer = "QUIT\r\n";
+    char resp[BUFSIZE]; //Almacenar la respuesta del servidor y mostrarla
 
-    // wait to receive PASS action
+    if(send(sd,buffer,sizeof(buffer), 0) < 0) {
+            perror("ERROR al escribir en el socket");
+                exit(1);
+    }
 
-    // if credentials don't check denied login
-
-    // confirm login
+    // Recibe la respuesta del Servidor
+    recv(sd, resp, sizeof(resp), 0);
+        printf("Servidor Responde: %s", resp);
 }
 
 /**
- *  function: execute all commands (RETR|QUIT)
- *  sd: socket descriptor
+ * function: make all operations (get|quit)
+ * sd: socket descriptor
  **/
-
 void operate(int sd) {
-    char op[CMDSIZE], param[PARSIZE];
+    char *input, *op, *param;
 
     while (true) {
-        op[0] = param[0] = '\0';
+        printf("Operation: ");
+        input = read_input();
 
-        // check for commands send by the client if not inform and exit
+        if (input == NULL)
+            continue; // avoid empty input
+        op = strtok(input, " ");
 
-        sd = read( sd , op, 4);
-         if (sd < 0){
-            perror("ERROR in reading from socket");
-            exit(1);
+                // free(input);
+        if (strcmp(op, "get") == 0) {
+            param = strtok(NULL, " ");
+            get(sd, param);
         }
-        if (strcmp(op, "RETR") == 0) {
-            retr(sd, param);
-        } else if (strcmp(op, "quit") == 0) {
-            // send goodbye and close connection
-            send_ans(sd,MSG_221);
-            //sd = write(sd, op, strlen(op));
-
-        if (sd < 0){
-            perror("ERROR in writing to socket");
-            exit(1);
-        }
+        // Verificar si el comando es QUIT
+        else if (strcmp(op, "quit") == 0) {
+            quit(sd);
             break;
-
-        } else {
-            // invalid command
-            // furute use
         }
+        else {
+            // new operations in the future
+            printf("TODO: unexpected command\n");
+        }
+        free(input);
     }
+    free(input);
 }
 
 
-/**
- * Run with
- *         ./mysrv <SERVER_PORT>
- **/
+/** Run with -->./myftp <SERVER_IP> <SERVER_PORT> **/
+
 int main (int argc, char *argv[]) {
 
+    int sd,n;
+    struct sockaddr_in client;
+    char resp[BUFSIZE];
+
     // arguments checking
+    if (argc<3) {
+        printf("Ingrese la ip del servidor a conectar y el numero de puerto\n");
+        exit(1);
+    }
 
-    // reserve sockets and variables space
-    int sd, new_socket;
-    struct sockaddr_in server;
-    int serverlen = sizeof(server);
+    // create socket and check for errors
 
-
-    // create server socket and check errors
-      sd = socket(AF_INET, SOCK_STREAM,0);
+    sd = socket(AF_INET, SOCK_STREAM, 0);
         if(sd < 0) {
-            perror("No se puede crear el socket");
+            perror("No se pudo crear el Socket");
             exit(1);
         }
 
-        server.sin_family = AF_INET;
-        server.sin_addr.s_addr = INADDR_ANY;
-       // printf("Server::  About to set %hu as the port...\n", (unsigned short)strtoul(argv[1], NULL, 0));
-        server.sin_port = htons(atoi(argv[1]));
-    // bind master socket and check errors
-    if(bind (sd, (struct sockaddr *)&server, sizeof(server)) < 0){
-    perror("Bind fallo");
-    exit(EXIT_FAILURE);
+    // Establecer datos del socket
+
+    client.sin_family = AF_INET;
+    client.sin_addr.s_addr = inet_addr(*(argv+1));
+    client.sin_port = htons(atoi(argv[2]));
+
+    // Conectar y verificar errores
+
+    if(connect(sd, (struct sockaddr *)&client, sizeof(client)) < 0){
+        perror("No se pudo conectar al servidor");
+        exit(2);
     }
 
- //   printf("Server::  About to listen on port %hu...\n", ntohs(server.sin_port));
+    // Si no hay errores, lee la entrada del servidor
 
-    // make it listen
-    if (listen(sd, 3) < 0)
-    {
-        perror("listen");
-        exit(EXIT_FAILURE);
-    }
+    else { if(recv(sd,resp, sizeof(resp),0) < 0) {
+            perror("No se pudo leer el mensaje");
+            exit(1);
+            }
 
-  char buffer[4];
+        printf("Servidor responde: %s \n", resp);
+        }
 
-    // main loop
-    while (true) {
-        // accept connectiones sequentially and check errors
-        if ((new_socket = accept(sd, (struct sockaddr *)&server,
-                       (socklen_t*)&serverlen))<0)
-    {
-        perror("accept");
-        exit(EXIT_FAILURE);
-    }
-    else{
-       // send(new_socket, MSG_220, sizeof(MSG_220),0);
-       send_ans(new_socket,MSG_220);
-    }
+    // if receive hello proceed with authenticate and operate if not warning
+    authenticate(sd);
+    operate(sd);
 
-    operate(new_socket);
-     break;
-
-    }
-
-        // send hello
-
-        // operate only if authenticate is true
-
-
-    // close server socket
+    // close socket
     close(sd);
 
     return 0;

@@ -10,6 +10,7 @@
 #include <arpa/inet.h>
 
 #define BUFSIZE 512
+#define MSG_530 "530 Login incorrect\r\n"
 
 /**
  * function: receive and analize the answer from the server
@@ -65,6 +66,7 @@ void send_msg(int sd, char *operation, char *param) {
  **/
 char * read_input() {
     char *input = malloc(BUFSIZE);
+char *read;
     if (fgets(input, BUFSIZE, stdin)) {
         return strtok(input, "\n");
     }
@@ -79,33 +81,60 @@ void authenticate(int sd) {
     char *input, desc[100];
     int code;
 
-    // ask for user
+    //Pide el usuario
     printf("username: ");
     input = read_input();
 
-    // send the command to the server
+    // Envia el comando al servidor
+    code = send(sd, input, sizeof(input), 0);
+    if (code < 0){
+           perror("No se pudo enviar mensaje");
+        }
 
-    // relese memory
+    // Libera Memoria
     free(input);
 
-    // wait to receive password requirement and check for errors
+    //Espera respuesta para pedir password
+    code = read(sd, desc, sizeof(desc));
+     if (code < 0){
+           perror("No se pudo leer el mensaje");
+        }
+
+        printf("Servidor Responde: %s\n", desc);
 
 
-    // ask for password
+    // Pide el password
     printf("passwd: ");
     input = read_input();
 
-    // send the command to the server
+    // Envia el comando al servidor
+     code = send(sd, input, strlen(input), 0);
+     if (code < 0){
+            perror("No se pudo enviar mensaje");
+        }
 
-
-    // release memory
+    // Libera memoria
     free(input);
 
-    // wait for answer and process it and check for errors
+    // Espera la respuesta del servidor
+   desc[0]='\0';
+
+    code = recv(sd, desc, sizeof(desc), 0);
+    if (code < 0){
+            perror("No se pudo leer el mensaje");
+        }
+
+        printf("Servidor Responde: %s\n", desc);
+
+    //si la autenticacion no es correcta, se cierra la conexion
+        if(strcmp(desc,MSG_530)==0) {
+            close(sd);
+            exit(1);
+        }
 
 }
 
-/**
+/** SIN USAR TODAVIA
  * function: operation get
  * sd: socket descriptor
  * file_name: file name to get from the server
@@ -141,21 +170,21 @@ void get(int sd, char *file_name) {
  * function: operation quit
  * sd: socket descriptor
  **/
+
 void quit(int sd) {
-    // send command QUIT to the client
-    int n;
-    char buffer[4] = "quit";
-    char resp[BUFSIZE];
-      n = write(sd,buffer,BUFSIZE);
 
-        if (n < 0){
-            perror("ERROR while writing to socket");
-            exit(1);
-        }
+    // Envia el comando QUIT al servidor
+    char *buffer = "QUIT\r\n";
+    char resp[BUFSIZE]; //Almacenar la respuesta del servidor y mostrarla
 
-    // receive the answer from the server
-    n = read(sd, resp, BUFSIZE);
-    printf("server replied: %s", resp);
+    if(send(sd,buffer,sizeof(buffer), 0) < 0) {
+            perror("ERROR al escribir en el socket");
+                exit(1);
+    }
+
+    // Recibe la respuesta del Servidor
+    recv(sd, resp, sizeof(resp), 0);
+        printf("Servidor Responde: %s", resp);
 }
 
 /**
@@ -165,18 +194,20 @@ void quit(int sd) {
 void operate(int sd) {
     char *input, *op, *param;
 
-
     while (true) {
         printf("Operation: ");
         input = read_input();
+
         if (input == NULL)
             continue; // avoid empty input
         op = strtok(input, " ");
-        // free(input);
+
+                // free(input);
         if (strcmp(op, "get") == 0) {
             param = strtok(NULL, " ");
             get(sd, param);
         }
+        // Verificar si el comando es QUIT
         else if (strcmp(op, "quit") == 0) {
             quit(sd);
             break;
@@ -190,15 +221,20 @@ void operate(int sd) {
     free(input);
 }
 
-/**
- * Run with
- *         ./myftp <SERVER_IP> <SERVER_PORT>
- **/
+
+/** Run with -->./myftp <SERVER_IP> <SERVER_PORT> **/
+
 int main (int argc, char *argv[]) {
+
     int sd,n;
-    struct sockaddr_in addr;char resp[BUFSIZE];
+    struct sockaddr_in client;
+    char resp[BUFSIZE];
 
     // arguments checking
+    if (argc<3) {
+        printf("Ingrese la ip del servidor a conectar y el numero de puerto\n");
+        exit(1);
+    }
 
     // create socket and check for errors
 
@@ -208,24 +244,32 @@ int main (int argc, char *argv[]) {
             exit(1);
         }
 
-    // set socket data
+    // Establecer datos del socket
 
-    addr.sin_family = AF_INET;
-    addr.sin_addr.s_addr = inet_addr(*(argv+1));
-    addr.sin_port = htons(atoi(argv[2]));
+    client.sin_family = AF_INET;
+    client.sin_addr.s_addr = inet_addr(*(argv+1));
+    client.sin_port = htons(atoi(argv[2]));
 
-    // connect and check for errors
-    if(connect(sd, (struct sockaddr *)&addr, sizeof(addr)) < 0){
+    // Conectar y verificar errores
+
+    if(connect(sd, (struct sockaddr *)&client, sizeof(client)) < 0){
         perror("No se pudo conectar al servidor");
         exit(2);
     }
-    else {n = read(sd, resp, BUFSIZE);
-    printf("server replied: %s \n", resp);
 
-    }
-    operate(sd);
+    // Si no hay errores, lee la entrada del servidor
+
+    else { if(recv(sd,resp, sizeof(resp),0) < 0) {
+            perror("No se pudo leer el mensaje");
+            exit(1);
+            }
+
+        printf("Servidor responde: %s \n", resp);
+        }
 
     // if receive hello proceed with authenticate and operate if not warning
+    authenticate(sd);
+    operate(sd);
 
     // close socket
     close(sd);
