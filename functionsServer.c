@@ -20,7 +20,7 @@
 #define cmd_RETR "RETR"
 
 
-#define MSG_200 "200 Command Recieve\r\n"
+#define MSG_200 "200 The requested action has been successfully completed\r\n"
 #define MSG_202 "202 Command not implemented\r\n"
 #define MSG_220 "220 srvFtp version 1.0\r\n"
 #define MSG_331 "331 Password required for %s\r\n"
@@ -33,6 +33,8 @@
 #define MSG_550 "550 %s: no such file or directory\r\n"
 #define MSG_299 "299 File %s size %ld bytes\r\n"
 #define MSG_226 "226 Transfer complete\r\n"
+#define MSG_431 "431 Delete failed. The directory %s is not empty.\r\n"
+#define MSG_500 "550 %s: no such file or directory\r\n"
 
 
 /**
@@ -252,7 +254,6 @@ while(transf_size >= 0){
             buffer_Data[512] = '\0';
 
         }
-
         //CAMBIO EL VALOR DE TRANSF_SIZE A -1 PARA ROMPER EL WHILE UNA VEZ TERMINADA LA TRASNFERENCIA
       transf_size = -1;
     }
@@ -261,14 +262,14 @@ while(transf_size >= 0){
 
         while(fread(buffer_Data,1,512,file_)){
 
-            printf("sending data = %s\n", buffer_Data);
+           // printf("sending data = %s\n", buffer_Data);
 
             if(write(sd,buffer_Data,BUFSIZE) < 0){
                 perror("Error sending file...\n");
                 exit(1);
              return false;
             }
-            printf("todo ok sending.. +512\n");
+           // printf("todo ok sending.. +512\n");
 
         memset(buffer_Data, 0, BUFSIZE);
         buffer_Data[512] = '\0';
@@ -361,9 +362,6 @@ void port(int sd, char *parame, char *filename){
 
     fclose(file);
 }
-
-
-
 
 /**
  * funcion: check valid credentials in ftpusers file
@@ -465,11 +463,213 @@ bool authenticate(int sd) {
     }
 }
 
-/**
- *  function: execute all commands (RETR|QUIT)
- *  sd: socket descriptor
- **/
 
+int getFileSize(char *filename){
+    FILE *file;
+    int fsize;
+
+    file = fopen(filename, "r");
+    fseek(file, 0, SEEK_END);
+        fsize = ftell(file);
+        rewind(file);
+        fclose(file);
+
+        return fsize;
+}
+void dir(int sd, char* directory){
+    char command[100];
+    char direc[100];
+    memset(command, 0, 100);
+    strcpy(direc, directory);
+    int list = 0;
+ 
+   char *dirr = "(null)";
+
+// for dir (null)
+    if(strcmp(dirr, directory) == 0){
+    sprintf(command, "ls -l > list.tmp");
+    system(command);
+    list = 1;
+    }
+
+//check if directory exist or not...
+    else{
+        sprintf(command, "find %s", directory);
+
+        if (system(command) == 0){
+            memset(command, 0, 100);
+            sprintf(command, "ls -l %s > list.tmp", directory);
+            system(command);
+            list = 1;
+            }
+
+        else {  
+            if (send_ans(sd,MSG_550, directory)){
+                    printf("Error. Directory doesn't exist..\n");
+                }
+            else{
+                    perror("ERROR writing socket");
+                    exit(1);
+                }
+            }
+    }
+//Directory exist, send file size
+if(list == 1){
+    //printf("command %s\n",command);
+    int fs;
+    fs = getFileSize("list.tmp");
+
+     if (send_ans(sd,MSG_299,"list.tmp", fs)){
+             printf("Command DIR OK..\n");
+         }
+
+    else {
+         perror("ERROR writing socket");
+         exit(1);
+         }
+  
+    }
+
+}
+
+void cd_dir(int sd, char* directory){
+    char command[100];
+    char direc[100];
+
+    memset(command, 0, 100);
+    memset(direc, 0, 100);
+    
+    strcpy(direc, directory);
+    char path[100];
+
+    printf("Curent working directory: %s\n", getcwd(path,100));
+
+    if(strcmp(directory, "..") == 0){
+        chdir(directory);
+
+        if (send_ans(sd,MSG_200)){
+            printf("Directory Changed..\n");
+            printf("Curent working directory: %s\n", getcwd(path,100));
+            }
+
+        else{
+                perror("ERROR writing socket");
+                exit(1);
+            }
+    }
+
+    //check if directory exist or not
+    else{
+        sprintf(command, "find %s", directory);
+
+        if (system(command) == 0){
+            chdir(directory);
+            
+            if (send_ans(sd, MSG_200)){
+                    printf("Directory Changed..\n");
+                    printf("Curent working directory: %s\n", getcwd(path,100));
+                }
+            else{
+                    perror("ERROR writing socket");
+                    exit(1);
+                }
+            }
+
+        else {  
+            if (send_ans(sd,MSG_550, directory)){
+                    printf("Error. Directory doesn't exist..\n");
+                }
+            else{
+                    perror("ERROR writing socket");
+                    exit(1);
+                }
+            }
+    }
+
+}
+
+void mk_dir(int sd, char* directory){
+    char command[100];
+    char direc[100];
+
+    memset(command, 0, 100);
+    memset(direc, 0, 100);
+    strcpy(direc, directory);
+
+    sprintf(command, "mkdir %s", directory);
+
+    if (system(command) == 0){
+        if (send_ans(sd,MSG_200)){
+                    printf("Directory Created..\n");
+                }
+                else{
+                    perror("ERROR writing socket");
+                    exit(1);
+                }
+    }
+// for mkdir (null)...
+    else {
+        if (send_ans(sd,MSG_550)){
+                    printf("No such a file or directory");
+                }
+        else{
+                perror("ERROR writing socket");
+                exit(1);
+            }
+    }
+}
+
+void rm_dir(int sd, char* directory){
+    char command[100];
+    char direc[100];
+    memset(command, 0, 100);
+    memset(direc, 0, 100);
+
+    strcpy(direc, directory);
+
+
+    sprintf(command, "rmdir %s", directory);
+    //printf("command %s\n",command);
+
+    if (system(command) == 0){
+        if (send_ans(sd,MSG_200)){
+                    printf("Directory deleted..\n");
+                }
+                else{
+                    perror("ERROR writing socket");
+                    exit(1);
+                }
+    }
+
+//check if the directory exists or not
+    else{
+        memset(command, 0, 100);
+        sprintf(command, "find %s", directory);
+
+        if (system(command) == 0){
+
+            if (send_ans(sd,MSG_431, directory)){
+                    printf("Error. Directory is NOT empty..\n");
+                }
+            else{
+                    perror("ERROR writing socket");
+                    exit(1);
+                }
+            }
+
+//for rmdir (null)
+        else {  
+
+            if (send_ans(sd,MSG_550, directory)){
+                    printf("Error. Directory doesn't exist..\n");
+                }
+            else{
+                    perror("ERROR writing socket");
+                    exit(1);
+                }
+            }
+    }
+}
 void operate(int sd) {
 //char op[CMDSIZE], param[PARSIZE];
 char  *op = malloc(4 * sizeof(char));
@@ -493,37 +693,67 @@ char file_name[32];
         //printf("ope: %s\n",op);
         //printf("param: %s\n",param);
 
-        if (strcmp(op, "RETR") == 0) {
+if (strcmp(op, "QUIT") != 0){
+
+    if (strcmp(op, "RETR") == 0) {
                 retr(sd, param);
                 strcpy(file_name, param);
-                //printf("Sali de retr\n");
-
         }
+          
         if (strcmp(op, "PORT") == 0) {
-               // retr(sd, param);
+             //printf("-%s", file_name);
                 port(sd,param,file_name);
-                //printf("Sali de port\n");
+
+                if(strcmp("list.tmp",file_name) == 0){
+                     if(remove(file_name)!= 0){
+                        perror("Error deleting file\n");
+                        }
+                    }
+
+                memset(file_name,0,32);
             }
-        else
+
+        if (strcmp(op, "NLST") == 0) {
+            strcpy(file_name, "list.tmp");
+                dir(sd, param);
+        }
+
+        if (strcmp(op, "CWDR") == 0) {
+                cd_dir(sd,param);
+            }
+
+        if (strcmp(op, "MKDR") == 0) {
+                mk_dir(sd,param);
+            }
+
+        if (strcmp(op, "RMDR") == 0) {
+                rm_dir(sd,param);
+            }
+    }
+
+    else{
             if (strcmp(op, "QUIT") == 0) {
 
             // send goodbye and close connection
                 if (send_ans(sd,MSG_221)){
                     printf("Client says quit..\n");
+                    close(sd);
                 }
                 else{
                     perror("ERROR writing socket");
                     exit(1);
                 }
-                    break;
+             break;
 
-        } else {
-            // invalid command
+            } 
 
-
-            // furute use
-        }
+            else {
+                 // invalid command
+                printf("Invalid Command\n");
+            }
     }
+  }
+
 }
 
 
@@ -550,7 +780,7 @@ int creat_socket(char *ip, struct sockaddr_in *adress_struct, char *port){
         else printf("Socket successfully binded..\n");
 
      //**************   LISTEN *******************
-    if ((listen(sd, 1)) < 0){
+    if ((listen(sd, 3)) < 0){
         perror("Listen failed...\n");
         exit(EXIT_FAILURE);
         }
@@ -569,3 +799,4 @@ int accept_client(int sd, struct sockaddr_in *adress_struct, int *len_adress_str
                 }
     return socket_;
 }
+/** Run --> ./mysrv <SERVER_PORT> **/

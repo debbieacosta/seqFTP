@@ -6,6 +6,7 @@
 #include <err.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <sys/stat.h>
 
 #define BUFSIZE 512
 #define cmd_USER "USER"
@@ -13,6 +14,12 @@
 #define cmd_PORT "PORT"
 #define cmd_RETR "RETR"
 #define cmd_QUIT "QUIT"
+
+#define cmd_DIR "NLST"
+#define cmd_CD "CWDR"
+#define cmd_MKDIR "MKDR"
+#define cmd_RMDIR "RMDR"
+#define FILENAME_DIR "list.tmp"
 
 #define CODE_200 200 //Command OK
 #define CODE_220 220 //Version
@@ -207,7 +214,7 @@ void recv_data(int sd, FILE *file, int f_size){
             fwrite(buffer_data, 1,512,file);
 
         }
-        else{   //sino, es menor y leo el tamaño total
+        else{   //sino, es menor y leo el tamaï¿½o total
             if(f_size!=0){
                 count = read(sd, buffer_data, f_size);
                 //printf("data: %s", buffer_data);
@@ -280,6 +287,62 @@ void send_cmdPort(int sd, char *buffer, char *ip, int *port){
  * sd: socket descriptor
  * file_name: file name to get from the server
  **/
+void total_socket_data(int sd, struct sockaddr_in *local_structClient, int f_size, char *file_name){
+
+	int data_transfer = 0;
+    struct sockaddr_in clienteServer_Data;
+  
+    int len_address = sizeof(*local_structClient);
+    FILE *file;
+
+	//***********************************************
+	int sk_data, sock_serverData;
+	char ip [INET_ADDRSTRLEN];
+    int port;  
+	 char desc[BUFSIZE], buffer[BUFSIZE];
+
+	sk_data = creat_SocketData(local_structClient);
+
+    //Get info and send to the server through command PORT
+    get_info(sk_data,ip,&port,local_structClient);
+    printf("Connection established with IP: %s y PORT: %d\n", ip, port);
+    send_cmdPort(sd,desc,ip,&port); //send: PORT 127,0,0,1,4,150
+
+	 //Accept Server as Client to transfer the data
+    sock_serverData = accept_client(sk_data,&clienteServer_Data, &len_address);
+
+     if(recv_msg(sock_serverData,CODE_225,buffer)) {
+             printf("Server Response: %s", buffer);
+        }
+
+    // open the file to write
+
+    file = fopen(file_name, "wb");
+        if (NULL == file) {
+            printf("File doesn't exists or cannot be opened\n");
+    }
+
+	
+    //Recieve data from Server
+    recv_data(sock_serverData,file,f_size);
+
+    memset(buffer,0,BUFSIZE);
+    if(recv_msg(sd,CODE_226,buffer)) { //Transfer OK
+        printf("Server Response: %s", buffer);
+
+    }
+    else {
+        printf("Server Response: %s", buffer);
+    }
+
+   
+
+    // close the file and sockets
+        fclose(file);
+        close(sk_data);
+        close(sock_serverData);
+
+}
 
 void get(int sd, char *file_name, struct sockaddr_in *local_structClient) {
     char desc[BUFSIZE], buffer[BUFSIZE];
@@ -311,7 +374,6 @@ void get(int sd, char *file_name, struct sockaddr_in *local_structClient) {
     }
     else {
         printf("Server Response: %s", buffer);
-        data_transfer = 0;
 
     }
 
@@ -329,47 +391,8 @@ void get(int sd, char *file_name, struct sockaddr_in *local_structClient) {
 
  while (data_transfer) {
 
-     //create Socket for Data and check for errors
-    sk_data = creat_SocketData(local_structClient);
-
-    //Get info and send to the server through command PORT
-    get_info(sk_data,ip,&port,local_structClient);
-    printf("Connection established with IP: %s y PORT: %d\n", ip, port);
-    send_cmdPort(sd,desc,ip,&port); //send: PORT 127,0,0,1,4,150
-
-    //Accept Server as Client to transfer the data
-    sock_serverData = accept_client(sk_data,&clienteServer_Data, &len_address);
-
-     if(recv_msg(sock_serverData,CODE_225,buffer)) {
-             printf("Server Response: %s", buffer);
-        }
-
-    // open the file to write
-
-    file = fopen(file_name, "wb");
-        if (NULL == file) {
-            printf("File doesn't exists or cannot be opened\n");
-    }
-
-    //Recieve data from Server
-    recv_data(sock_serverData,file,f_size);
-
-    memset(buffer,0,BUFSIZE);
-    if(recv_msg(sd,CODE_226,buffer)) { //Transfer OK
-        printf("Server Response: %s", buffer);
-
-    }
-    else {
-        printf("Server Response: %s", buffer);
-    }
-
-    data_transfer = 0;
-
-    // close the file and sockets
-        fclose(file);
-        close(sk_data);
-        close(sock_serverData);
-
+    total_socket_data(sd, local_structClient, f_size, file_name);
+ data_transfer = 0;
     }
 }
 
@@ -377,6 +400,121 @@ void get(int sd, char *file_name, struct sockaddr_in *local_structClient) {
  * function: operation quit
  * sd: socket descriptor
  **/
+void dir(int sd, struct sockaddr_in *local_structClient, char *dir_name){
+    char buffer[BUFSIZE];
+    char directory[BUFSIZE];
+    int data = 0;
+    int list = 0;
+    char file_name[20];
+    int f_size;
+    memset(buffer,0,BUFSIZE);
+
+    sprintf(directory, "%s\r\n", dir_name);
+
+    send_msg(sd,cmd_DIR,directory);
+
+    // Recibe la respuesta del Servidor
+    if(recv_msg(sd, CODE_299, buffer)) {
+                printf("Server Response: %s", buffer);
+                data =1;
+                list = 1;
+
+    //get the size of the file
+    sscanf(buffer, "299 File %s size %d bytes", file_name, &f_size);
+    //printf("nombreee %s\n", file_name);
+   
+    while (data){
+        total_socket_data(sd,local_structClient, f_size, file_name);
+        data = 0;
+    }
+    
+}
+    
+else{printf("Server Response: %s", buffer);}
+
+if(list == 1){
+    FILE *file;
+    struct stat st;
+    char line[BUFSIZE];
+
+    
+    file = fopen(file_name, "r");
+
+  while(fgets(line, sizeof(line), file) != NULL) {
+        fputs(line, stdout);
+     }
+ 
+
+fclose(file);
+
+//Delete file...
+  if(remove(file_name)!= 0){
+      perror("Error deleting file\n");
+       }
+
+  }
+
+}
+
+void cd_dir(int sd, struct sockaddr_in *local_structClient, char *dir_name){
+    char buffer[BUFSIZE];
+    char directory[BUFSIZE];
+    int data = 1;
+
+    memset(buffer,0,BUFSIZE);
+    memset(directory,0,BUFSIZE);
+
+    sprintf(directory, "%s\r\n", dir_name);
+
+    send_msg(sd,cmd_CD,directory);
+
+     if(recv_msg(sd, CODE_200, buffer)) {
+                printf("Server Response: %s", buffer);
+    }
+           else{
+            printf("Server Response: %s", buffer);
+        } 
+}
+
+void mkd(int sd, struct sockaddr_in *local_structClient, char *dir_name){
+    char buffer[BUFSIZE];
+    char directory[BUFSIZE];
+    int data = 1;
+
+    memset(buffer,0,BUFSIZE);
+    memset(directory,0,BUFSIZE);
+
+    sprintf(directory, "%s\r\n", dir_name);
+
+    send_msg(sd,cmd_MKDIR,directory);
+
+     if(recv_msg(sd, CODE_200, buffer)) {
+             printf("Server Response: %s", buffer);
+    }
+    else{
+            printf("Server Response: %s", buffer);
+           }
+}
+void rmd(int sd, struct sockaddr_in *local_structClient, char *dir_name){
+    char buffer[BUFSIZE];
+    char directory[BUFSIZE];
+    int data = 1;
+
+    memset(buffer,0,BUFSIZE);
+    memset(directory,0,BUFSIZE);
+
+    sprintf(directory, "%s\r\n", dir_name);
+
+    send_msg(sd,cmd_RMDIR,directory);
+
+     if(recv_msg(sd, CODE_200, buffer)) {
+                printf("Server Response: %s", buffer);
+                }
+        else{
+            printf("Server Response: %s", buffer);
+        }  
+    
+}
 
 void quit(int sd) {
 
@@ -406,27 +544,54 @@ void operate(int sd, struct sockaddr_in *local_structClient) {
         printf("Operation: ");
         input = read_input();
 
-        if (input == NULL)
+         if (input == NULL)
             continue; // avoid empty input
         op = strtok(input, " ");
 
-                // free(input);
+    if (strcmp(op, "quit") != 0){
         if (strcmp(op, "get") == 0) {
             param = strtok(NULL, " ");
             get(sd, param, local_structClient);
         }
-        // Verificar si el comando es QUIT
-        else if (strcmp(op, "quit") == 0) {
+
+        if (strcmp(op, "dir") == 0) {
+            param = strtok(NULL, " ");
+            dir(sd,local_structClient,param);
+        }
+
+        if (strcmp(op, "cd") == 0) {
+            param = strtok(NULL, " ");
+            cd_dir(sd,local_structClient,param);
+        }
+
+        if (strcmp(op, "mkdir") == 0) {
+            param = strtok(NULL, " ");
+            mkd(sd,local_structClient,param);
+        }
+
+        if (strcmp(op, "rmdir") == 0) {
+            param = strtok(NULL, " ");
+            rmd(sd,local_structClient,param);
+        }
+    }
+        else {
+            if (strcmp(op, "quit") == 0) {
             quit(sd);
             break;
         }
+        
+        // Verificar si el comando es QUIT
         else {
             // new operations in the future
             printf("TODO: unexpected command\n");
         }
+        }
         free(input);
-    }
-    free(input);
+        
+}
+                // free(input);
+     free(input);
+       
 }
 
 int create_socket(char *ip, struct sockaddr_in *local_address, char *port){
