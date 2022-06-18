@@ -1,0 +1,6 @@
+get - obtener archivo
+quit - exit
+dir - listar directorio
+mkdir - crear directorio
+cd - cambiar de directorio
+rmdir - eliminar directorio
